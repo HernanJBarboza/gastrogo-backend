@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { v4: uuid } = require('uuid');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -15,6 +17,29 @@ function apiKeyAuth(req, res, next){
   const key = req.header('x-api-key') || req.query.apiKey;
   if (!key || key !== API_KEY) return res.status(401).json({ error: 'unauthorized' });
   next();
+}
+
+// JWT auth
+const JWT_SECRET = process.env.JWT_SECRET || 'supersecretjwt';
+const users = [];
+function generateToken(user){
+  return jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '8h' });
+}
+function requireAuth(req, res, next){
+  // allow API key OR bearer token
+  const key = req.header('x-api-key') || req.query.apiKey;
+  if (key && key === API_KEY) return next();
+  const auth = req.header('authorization');
+  if (!auth) return res.status(401).json({ error: 'unauthorized' });
+  const parts = auth.split(' ');
+  if (parts.length !== 2 || parts[0] !== 'Bearer') return res.status(401).json({ error: 'invalid_auth' });
+  try{
+    const payload = jwt.verify(parts[1], JWT_SECRET);
+    req.user = payload;
+    return next();
+  }catch(e){
+    return res.status(401).json({ error: 'invalid_token' });
+  }
 }
 
 // Presentation cache (in-memory)
@@ -65,6 +90,35 @@ app.post('/products', (req, res) => {
   const p = { id: uuid(), name, price: price || 0, stock: stock || 0 };
   products.push(p);
   res.status(201).json(p);
+});
+
+// Auth endpoints
+app.post('/auth/register', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'email_password_required' });
+  if (users.find(u => u.email === email)) return res.status(409).json({ error: 'user_exists' });
+  const hashed = await bcrypt.hash(password, 8);
+  const user = { id: uuid(), email, passwordHash: hashed };
+  users.push(user);
+  const token = generateToken(user);
+  res.status(201).json({ id: user.id, email: user.email, token });
+});
+
+app.post('/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'email_password_required' });
+  const user = users.find(u => u.email === email);
+  if (!user) return res.status(401).json({ error: 'invalid_credentials' });
+  const ok = await bcrypt.compare(password, user.passwordHash);
+  if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
+  const token = generateToken(user);
+  res.json({ id: user.id, email: user.email, token });
+});
+
+app.get('/auth/me', requireAuth, (req, res) => {
+  const u = users.find(x => x.id === req.user.id);
+  if (!u) return res.status(404).json({ error: 'not_found' });
+  res.json({ id: u.id, email: u.email });
 });
 
 // Menus interactivos (CRUD)
