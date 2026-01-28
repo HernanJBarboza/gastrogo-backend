@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>GastroGo Admin</title>
+    <link rel="stylesheet" href="/admin/style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>GastroGo - Admin</h1>
+      <div id="auth">
+        <input id="email" placeholder="email" />
+        <input id="password" placeholder="password" type="password" />
+        <button id="login">Login / Register</button>
+        <div id="auth-msg"></div>
+      </div>
+
+      <div id="main" style="display:none">
+        <h2>Menus</h2>
+        <button id="refresh">Refresh</button>
+        <ul id="menus"></ul>
+        <h3>Create Menu</h3>
+        <input id="m-title" placeholder="Title" />
+        <textarea id="m-items" placeholder='Items as JSON array e.g. [{"name":"A","price":1.0}]'></textarea>
+        <input id="m-template" placeholder="templateId" />
+        <button id="create-menu">Create</button>
+        <div id="msg"></div>
+      </div>
+    </div>
+    <script src="/admin/app.js"></script>
+  </body>
+</html>

@@ -74,6 +74,9 @@ app.get('/recipes/:id', (req, res) => {
   if (!r) return res.status(404).json({ error: 'not_found' });
   res.json(r);
 });
+// Serve admin static files
+app.use('/admin', express.static(path.join(__dirname, 'admin')));
+
 app.post('/recipes', (req, res) => {
   const { title, ingredients, steps } = req.body;
   if (!title) return res.status(400).json({ error: 'title_required' });
