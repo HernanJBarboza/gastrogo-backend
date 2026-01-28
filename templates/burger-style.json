@@ -1,0 +1,15 @@
+{
+  "id": "burger-style",
+  "name": "Estilo Burger-like",
+  "config": {
+    "backgroundColor": "#111111",
+    "accentColor": "#FFB400",
+    "font": "Helvetica, sans-serif",
+    "sections": [
+      { "name": "hero", "type": "video", "height": "55%" },
+      { "name": "combo", "type": "carousel", "height": "25%" },
+      { "name": "menu", "type": "list", "height": "20%" }
+    ],
+    "behaviors": { "autoPlayVideo": true, "overlayText": true }
+  }
+}

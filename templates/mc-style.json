@@ -1,0 +1,15 @@
+{
+  "id": "mc-style",
+  "name": "Estilo Mc-like",
+  "config": {
+    "backgroundColor": "#FFD400",
+    "accentColor": "#DA291C",
+    "font": "Arial, sans-serif",
+    "sections": [
+      { "name": "hero", "type": "carousel", "height": "50%" },
+      { "name": "offers", "type": "grid", "height": "30%" },
+      { "name": "footer", "type": "ticker", "height": "20%" }
+    ],
+    "behaviors": { "autoRotate": true, "rotateIntervalSec": 8 }
+  }
+}

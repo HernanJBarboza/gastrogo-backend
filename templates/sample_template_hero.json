@@ -1,0 +1,14 @@
+{
+  "id": "tpl-hero-1",
+  "name": "Hero Combo",
+  "layout": "hero",
+  "style": { "background": "#000000", "color": "#ffffff", "accent": "#ff5500" },
+  "blocks": [
+    { "type": "title", "value": "Mega Combo Familiar" },
+    { "type": "subtitle", "value": "Incluye 2 hamburguesas, papas y bebida" },
+    { "type": "image", "value": "/assets/hero_combo.jpg" },
+    { "type": "price", "value": "$14.99" },
+    { "type": "badge", "value": "Oferta" },
+    { "type": "cta", "value": "Ordenar" }
+  ]
+}

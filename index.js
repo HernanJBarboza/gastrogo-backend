@@ -1,0 +1,300 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const { v4: uuid } = require('uuid');
+
+const app = express();
+const PORT = process.env.PORT || 4000;
+
+app.use(cors());
+app.use(express.json());
+
+// Simple API key auth for protected routes
+const API_KEY = process.env.API_KEY || 'secret-api-key';
+function apiKeyAuth(req, res, next){
+  const key = req.header('x-api-key') || req.query.apiKey;
+  if (!key || key !== API_KEY) return res.status(401).json({ error: 'unauthorized' });
+  next();
+}
+
+// Presentation cache (in-memory)
+const presCache = new Map(); // menuId -> { payload, expiresAt }
+function getCachedPresentation(menuId){
+  const entry = presCache.get(menuId);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) { presCache.delete(menuId); return null; }
+  return entry.payload;
+}
+function setCachedPresentation(menuId, payload, ttlSec){
+  const ttl = (ttlSec && Number(ttlSec)) ? Number(ttlSec) : 30; // default 30s
+  presCache.set(menuId, { payload, expiresAt: Date.now() + ttl*1000 });
+}
+
+
+// In-memory stores (replace with DB in production)
+const recipes = [
+  { id: uuid(), title: 'Ensalada Mediterránea', ingredients: ['lechuga', 'tomate', 'aceitunas'], steps: ['Lavar', 'Cortar', 'Mezclar'] }
+];
+
+const products = [
+  { id: uuid(), name: 'Tomate orgánico', price: 1.5, stock: 120 }
+];
+
+app.get('/health', (req, res) => res.json({ status: 'ok', service: 'gastro-backend' }));
+
+// Recipes
+app.get('/recipes', (req, res) => res.json(recipes));
+app.get('/recipes/:id', (req, res) => {
+  const r = recipes.find(x => x.id === req.params.id);
+  if (!r) return res.status(404).json({ error: 'not_found' });
+  res.json(r);
+});
+app.post('/recipes', (req, res) => {
+  const { title, ingredients, steps } = req.body;
+  if (!title) return res.status(400).json({ error: 'title_required' });
+  const newR = { id: uuid(), title, ingredients: ingredients || [], steps: steps || [] };
+  recipes.push(newR);
+  res.status(201).json(newR);
+});
+
+// Products
+app.get('/products', (req, res) => res.json(products));
+app.post('/products', (req, res) => {
+  const { name, price, stock } = req.body;
+  if (!name) return res.status(400).json({ error: 'name_required' });
+  const p = { id: uuid(), name, price: price || 0, stock: stock || 0 };
+  products.push(p);
+  res.status(201).json(p);
+});
+
+// Menus interactivos (CRUD)
+const menus = [
+  { id: uuid(), title: 'Menu Desayuno', items: [{ name: 'Cafe', price: 1.2 }, { name: 'Tostada', price: 2.5 }], templateId: 'mc-style', active: true }
+];
+
+app.get('/menus', (req, res) => res.json(menus));
+app.get('/menus/:id', (req, res) => {
+  const m = menus.find(x => x.id === req.params.id);
+  if (!m) return res.status(404).json({ error: 'not_found' });
+  res.json(m);
+});
+app.post('/menus', apiKeyAuth, (req, res) => {
+  const { title, items, templateId, active } = req.body;
+  if (!title) return res.status(400).json({ error: 'title_required' });
+  const newM = { id: uuid(), title, items: items || [], templateId: templateId || null, active: active !== false };
+  menus.push(newM);
+  // clear cache for this menu just in case
+  presCache.delete(newM.id);
+  res.status(201).json(newM);
+});
+app.put('/menus/:id', apiKeyAuth, (req, res) => {
+  const m = menus.find(x => x.id === req.params.id);
+  if (!m) return res.status(404).json({ error: 'not_found' });
+  const { title, items, templateId, active } = req.body;
+  if (title !== undefined) m.title = title;
+  if (items !== undefined) m.items = items;
+  if (templateId !== undefined) m.templateId = templateId;
+  if (active !== undefined) m.active = active;
+  // clear cache for this menu
+  presCache.delete(m.id);
+  res.json(m);
+});
+app.delete('/menus/:id', apiKeyAuth, (req, res) => {
+  const idx = menus.findIndex(x => x.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not_found' });
+  const removed = menus.splice(idx, 1);
+  presCache.delete(removed[0].id);
+  res.status(204).end();
+});
+
+// Templates para pantallas (plantillas de anuncio)
+const fs = require('fs');
+const path = require('path');
+
+app.get('/templates', (req, res) => {
+  const dir = path.join(__dirname, 'templates');
+  try {
+    const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+    const templates = files.map(f => {
+      try { return JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch(e){ return null }
+    }).filter(Boolean);
+    res.json(templates);
+  } catch (e) {
+    res.json([]);
+  }
+});
+
+app.get('/templates/:id', (req, res) => {
+  const id = req.params.id;
+  const file = path.join(__dirname, 'templates', `${id}.json`);
+  if (!fs.existsSync(file)) return res.status(404).json({ error: 'not_found' });
+  try { const data = JSON.parse(fs.readFileSync(file, 'utf8')); res.json(data); } catch(e){ res.status(500).json({ error: 'invalid_template' }) }
+});
+app.post('/templates', apiKeyAuth, (req, res) => {
+  const { id, name, config } = req.body;
+  if (!id || !config) return res.status(400).json({ error: 'id_and_config_required' });
+  const file = path.join(__dirname, 'templates', `${id}.json`);
+  try { fs.writeFileSync(file, JSON.stringify({ id, name: name || id, config }, null, 2), 'utf8');
+    // clear all cached presentations because templates changed
+    presCache.clear();
+    res.status(201).json({ id, name: name || id });
+  } catch(e){ res.status(500).json({ error: 'write_failed' }) }
+});
+
+// Endpoint para limpiar cache (protegido)
+app.post('/cache/clear', apiKeyAuth, (req, res) => {
+  presCache.clear();
+  res.json({ cleared: true });
+});
+
+// Endpoint de presentación para pantallas (combina menú + plantilla)
+app.get('/present/:menuId', (req, res) => {
+  const menuId = req.params.menuId;
+  const menu = menus.find(m => m.id === menuId);
+  if (!menu) return res.status(404).json({ error: 'menu_not_found' });
+
+  const force = req.query.refresh === 'true' || req.query.force === 'true';
+  // check cache
+  if (!force) {
+    const cached = getCachedPresentation(menuId);
+    if (cached) return res.json({ cached: true, ...cached });
+  }
+
+  // Allow override of template via query param
+  const templateId = req.query.templateId || menu.templateId;
+  let template = null;
+  if (templateId) {
+    const file = path.join(__dirname, 'templates', `${templateId}.json`);
+    if (fs.existsSync(file)) {
+      try { template = JSON.parse(fs.readFileSync(file, 'utf8')); } catch(e){ template = null }
+    }
+  }
+
+  // Build presentation payload
+  const presentation = {
+    menu: { id: menu.id, title: menu.title, items: menu.items },
+    template: template || { id: null, name: null, config: { backgroundColor: '#fff', accentColor: '#000', sections: [] } },
+    meta: {
+      generatedAt: new Date().toISOString(),
+      rotate: (template && template.config && template.config.behaviors && template.config.behaviors.autoRotate) || req.query.rotate === 'true',
+      rotateIntervalSec: (template && template.config && template.config.behaviors && template.config.behaviors.rotateIntervalSec) || parseInt(req.query.interval) || 8
+    }
+  };
+
+  // Simple slide generation: map template sections to slides using menu items
+  const slides = [];
+  const sections = presentation.template.config.sections || [];
+  for (const section of sections) {
+    if (section.type === 'hero') {
+      slides.push({ type: 'hero', height: section.height, content: menu.items.slice(0, 1) });
+    } else if (section.type === 'carousel') {
+      slides.push({ type: 'carousel', height: section.height, content: menu.items });
+    } else if (section.type === 'grid') {
+      slides.push({ type: 'grid', height: section.height, content: menu.items });
+    } else if (section.type === 'list') {
+      slides.push({ type: 'list', height: section.height, content: menu.items });
+    } else if (section.type === 'video') {
+      slides.push({ type: 'video', height: section.height, content: { url: section.videoUrl || null } });
+    } else if (section.type === 'ticker') {
+      slides.push({ type: 'ticker', height: section.height, content: menu.items.map(i => i.name).join(' • ') });
+    } else {
+      slides.push({ type: section.type || 'unknown', height: section.height, content: menu.items });
+    }
+  }
+
+  presentation.slides = slides;
+
+  // cache result - ttl can be provided by template.config.cacheTTLsec
+  const ttl = (template && template.config && template.config.cacheTTLsec) ? template.config.cacheTTLsec : 30;
+  setCachedPresentation(menuId, { cached: false, ...presentation }, ttl);
+
+  res.json({ cached: false, ...presentation });
+});
+
+// Templates CRUD
+app.get('/templates', (req, res) => res.json(templates));
+app.get('/templates/:id', (req, res) => {
+  const t = templates.find(x => x.id === req.params.id);
+  if (!t) return res.status(404).json({ error: 'not_found' });
+  res.json(t);
+});
+app.post('/templates', (req, res) => {
+  const { id, name, layout, style, blocks } = req.body;
+  const tpl = { id: id || `tpl-${uuid()}`, name, layout, style: style || {}, blocks: blocks || [] };
+  templates.push(tpl);
+  res.status(201).json(tpl);
+});
+app.put('/templates/:id', (req, res) => {
+  const idx = templates.findIndex(x => x.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not_found' });
+  templates[idx] = { ...templates[idx], ...req.body };
+  res.json(templates[idx]);
+});
+app.delete('/templates/:id', (req, res) => {
+  const idx = templates.findIndex(x => x.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not_found' });
+  templates.splice(idx, 1);
+  res.status(204).end();
+});
+
+// Menus CRUD
+app.get('/menus', (req, res) => res.json(menus));
+app.get('/menus/:id', (req, res) => {
+  const m = menus.find(x => x.id === req.params.id);
+  if (!m) return res.status(404).json({ error: 'not_found' });
+  res.json(m);
+});
+app.post('/menus', (req, res) => {
+  const { id, name, items, templateId, active } = req.body;
+  const menu = { id: id || `menu-${uuid()}`, name, items: items || [], templateId: templateId || null, active: !!active, updatedAt: new Date().toISOString() };
+  if (menu.active) menus.forEach(x => x.active = false);
+  menus.push(menu);
+  res.status(201).json(menu);
+});
+app.put('/menus/:id', (req, res) => {
+  const idx = menus.findIndex(x => x.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not_found' });
+  menus[idx] = { ...menus[idx], ...req.body, updatedAt: new Date().toISOString() };
+  if (menus[idx].active) menus.forEach((m, i) => { if (i !== idx) m.active = false; });
+  res.json(menus[idx]);
+});
+app.delete('/menus/:id', (req, res) => {
+  const idx = menus.findIndex(x => x.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not_found' });
+  menus.splice(idx, 1);
+  res.status(204).end();
+});
+
+// Activate menu
+app.post('/menus/:id/activate', (req, res) => {
+  const m = menus.find(x => x.id === req.params.id);
+  if (!m) return res.status(404).json({ error: 'not_found' });
+  menus.forEach(x => x.active = false);
+  m.active = true;
+  m.updatedAt = new Date().toISOString();
+  res.json(m);
+});
+
+// Presentation endpoint: devuelve el menú activo junto con la plantilla
+app.get('/presentation', (req, res) => {
+  const menuId = req.query.menuId;
+  let menu = null;
+  if (menuId) menu = menus.find(x => x.id === menuId);
+  else menu = menus.find(x => x.active) || menus[0] || null;
+  if (!menu) return res.status(404).json({ error: 'no_menu' });
+  const template = templates.find(t => t.id === menu.templateId) || null;
+  res.json({ menu, template, timestamp: new Date().toISOString() });
+});
+
+// Mount menu module
+const menuModule = require('./menuModule');
+app.use('/menu', menuModule);
+
+app.listen(PORT, () => console.log(`gastro-backend listening on ${PORT}`));
+
+// Debug route
+app.get('/debug', (req, res) => {
+  res.json({ pid: process.pid, uptimeSec: process.uptime(), port: PORT, env: process.env.NODE_ENV || 'development' });
+});
+
+console.log('process.pid =', process.pid);
