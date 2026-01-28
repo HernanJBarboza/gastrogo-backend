@@ -295,7 +295,7 @@ app.delete('/menus/:id', apiKeyAuth, (req, res) => {
 
 // Templates para pantallas (plantillas de anuncio)
 const fs = require('fs');
-const path = require('path');
+// path ya está importado arriba
 
 app.get('/templates', (req, res) => {
   const dir = path.join(__dirname, 'templates');
