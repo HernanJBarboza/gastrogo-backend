@@ -131,6 +131,7 @@ const ordersRoutes = require('./routes/orders');
 const tablesRoutes = require('./routes/tables');
 const kitchenRoutes = require('./routes/kitchen');
 const qrRoutes = require('./routes/qr');
+const displayRoutes = require('./routes/display');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/menu', menuRoutes);
@@ -138,6 +139,7 @@ app.use('/api/orders', ordersRoutes);
 app.use('/api/tables', tablesRoutes);
 app.use('/api/kitchen', kitchenRoutes);
 app.use('/api/qr', qrRoutes);
+app.use('/api/display', displayRoutes);
 // ═══════════════════════════════════════════════════════════
 
 // Simple API key auth for protected routes

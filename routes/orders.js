@@ -395,4 +395,84 @@ router.get('/kitchen/active', authenticate, authorize(['staff', 'admin']), async
   }
 });
 
+/**
+ * GET /api/orders/track/:orderNumber
+ * Endpoint público para tracking de pedido por número
+ * No requiere autenticación - usado por clientes para ver estado
+ */
+router.get('/track/:orderNumber', async (req, res) => {
+  try {
+    const { orderNumber } = req.params;
+    
+    // Buscar por ID o número de orden
+    const order = orders.find(o => 
+      o.id === orderNumber || 
+      o.order_number === orderNumber ||
+      o.id.startsWith(orderNumber)
+    );
+    
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        error: 'Pedido no encontrado'
+      });
+    }
+    
+    // Calcular tiempo estimado basado en items y estado actual
+    const itemCount = order.items.reduce((sum, item) => sum + item.quantity, 0);
+    let estimatedMinutes = Math.max(10, itemCount * 5); // 5 min por item, mínimo 10
+    
+    if (order.status === 'preparing') {
+      // Ya pasó tiempo de confirmación
+      const prepStarted = new Date(order.preparing_at || order.updated_at);
+      const elapsed = (Date.now() - prepStarted.getTime()) / 1000 / 60;
+      estimatedMinutes = Math.max(5, estimatedMinutes - elapsed);
+    } else if (order.status === 'ready' || order.status === 'delivered') {
+      estimatedMinutes = 0;
+    }
+    
+    // Construir historial de estados
+    const statusHistory = [];
+    const statusOrder = ['created', 'confirmed', 'preparing', 'ready', 'delivered'];
+    
+    statusOrder.forEach(status => {
+      const timestamp = order[`${status}_at`];
+      if (timestamp) {
+        statusHistory.push({ status, timestamp });
+      }
+    });
+    
+    // Si solo tiene created_at, usar eso
+    if (statusHistory.length === 0 && order.created_at) {
+      statusHistory.push({ status: 'created', timestamp: order.created_at });
+    }
+    
+    // Respuesta formateada para tracking
+    res.json({
+      success: true,
+      data: {
+        id: order.id,
+        orderNumber: order.order_number || order.id.slice(-6).toUpperCase(),
+        tableNumber: order.table_number,
+        status: order.status,
+        items: order.items.map(item => ({
+          name: item.dish_name,
+          quantity: item.quantity
+        })),
+        estimatedMinutes: Math.round(estimatedMinutes),
+        createdAt: order.created_at,
+        updatedAt: order.updated_at,
+        statusHistory
+      }
+    });
+  } catch (error) {
+    console.error('Error tracking order:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener estado del pedido'
+    });
+  }
+});
+
 module.exports = router;
+
