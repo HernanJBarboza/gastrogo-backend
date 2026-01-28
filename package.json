@@ -1,22 +1,29 @@
 {
   "name": "gastro-backend",
-  "version": "0.1.0",
-  "description": "Backend mínimo para GastroGo - API REST preparada para Heroku",
+  "version": "1.0.0",
+  "description": "GastroGO - Plataforma de gestión de pedidos por QR y menús interactivos",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "test": "node tests/api.test.js && node tests/websocket.test.js && node tests/fase4.integration.test.js && node tests/e2e.test.js",
+    "test:api": "node tests/api.test.js",
+    "test:ws": "node tests/websocket.test.js",
+    "test:integration": "node tests/fase4.integration.test.js",
+    "test:e2e": "node tests/e2e.test.js",
+    "test:performance": "node tests/performance.test.js",
+    "test:all": "node tests/api.test.js && node tests/websocket.test.js && node tests/fase4.integration.test.js && node tests/e2e.test.js && node tests/performance.test.js"
   },
   "engines": {
     "node": "18.x"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
-    "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.0",
     "express": "^4.18.2",
-    "uuid": "^9.0.0"
+    "jsonwebtoken": "^9.0.0",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
     "nodemon": "^2.0.22"

@@ -1,15 +1,144 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const { v4: uuid } = require('uuid');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const http = require('http');
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 4000;
+
+// ═══════════════════════════════════════════════════════════
+// SOCKET.IO SETUP
+// ═══════════════════════════════════════════════════════════
+const { EVENTS, handlers, wsService } = require('./services/websocket');
+
+// Socket.IO integration (conditionally loaded)
+let io = null;
+try {
+  const { Server } = require('socket.io');
+  io = new Server(server, {
+    cors: {
+      origin: process.env.CORS_ORIGIN || '*',
+      methods: ['GET', 'POST'],
+    },
+  });
+
+  io.on('connection', (socket) => {
+    console.log(`🔌 Client connected: ${socket.id}`);
+    wsService.connect(socket.id, { socketId: socket.id });
+
+    // Client events
+    socket.on(EVENTS.CLIENT.JOIN_TABLE, (data) => {
+      const result = handlers[EVENTS.CLIENT.JOIN_TABLE](wsService, socket.id, data);
+      socket.join(`table:${data.tableId}`);
+      socket.join(`session:${data.sessionId}`);
+      socket.emit(EVENTS.SERVER.SESSION_JOINED, result);
+    });
+
+    socket.on(EVENTS.CLIENT.NEW_ORDER, (data) => {
+      const result = handlers[EVENTS.CLIENT.NEW_ORDER](wsService, socket.id, data);
+      io.to(`kitchen:${data.restaurantId}`).emit(EVENTS.SERVER.ORDER_CREATED, data.order);
+      socket.emit('order:confirmed', result);
+    });
+
+    socket.on(EVENTS.CLIENT.CALL_WAITER, (data) => {
+      const result = handlers[EVENTS.CLIENT.CALL_WAITER](wsService, socket.id, data);
+      io.to(`staff:${data.restaurantId}`).emit(EVENTS.SERVER.WAITER_NOTIFIED, {
+        tableId: data.tableId,
+        tableNumber: data.tableNumber,
+        timestamp: new Date().toISOString(),
+      });
+    });
+
+    socket.on(EVENTS.CLIENT.REQUEST_BILL, (data) => {
+      handlers[EVENTS.CLIENT.REQUEST_BILL](wsService, socket.id, data);
+      io.to(`staff:${data.restaurantId}`).emit('bill:requested', {
+        tableId: data.tableId,
+        tableNumber: data.tableNumber,
+      });
+    });
+
+    // Kitchen events
+    socket.on(EVENTS.KITCHEN.JOIN_KITCHEN, (data) => {
+      const result = handlers[EVENTS.KITCHEN.JOIN_KITCHEN](wsService, socket.id, data);
+      socket.join(`kitchen:${data.restaurantId}`);
+      socket.emit('kitchen:joined', result);
+    });
+
+    socket.on(EVENTS.KITCHEN.UPDATE_STATUS, (data) => {
+      handlers[EVENTS.KITCHEN.UPDATE_STATUS](wsService, socket.id, data);
+      io.to(`table:${data.tableId}`).emit(EVENTS.SERVER.ORDER_UPDATED, {
+        orderId: data.orderId,
+        status: data.status,
+      });
+      io.to(`kitchen:${data.restaurantId}`).emit(EVENTS.SERVER.ORDER_UPDATED, {
+        orderId: data.orderId,
+        status: data.status,
+      });
+      
+      // Special notification when order is ready
+      if (data.status === 'ready') {
+        io.to(`table:${data.tableId}`).emit(EVENTS.SERVER.ORDER_READY, {
+          orderId: data.orderId,
+          message: '¡Tu pedido está listo!',
+        });
+      }
+    });
+
+    socket.on(EVENTS.KITCHEN.BUMP_ORDER, (data) => {
+      handlers[EVENTS.KITCHEN.BUMP_ORDER](wsService, socket.id, data);
+      io.to(`kitchen:${data.restaurantId}`).emit('order:bumped', {
+        orderId: data.orderId,
+      });
+    });
+
+    // Staff events
+    socket.on('staff:join', (data) => {
+      socket.join(`staff:${data.restaurantId}`);
+      wsService.joinRoom(socket.id, `staff:${data.restaurantId}`);
+    });
+
+    socket.on('disconnect', () => {
+      console.log(`🔌 Client disconnected: ${socket.id}`);
+      wsService.disconnect(socket.id);
+    });
+  });
+
+  console.log('✅ Socket.IO inicializado correctamente');
+} catch (error) {
+  console.log('⚠️ Socket.IO no disponible, WebSocket deshabilitado');
+  console.log('   Para habilitar: npm install socket.io');
+}
+
+// Exportar io para uso en rutas
+app.set('io', io);
+app.set('wsService', wsService);
+// ═══════════════════════════════════════════════════════════
 
 app.use(cors());
 app.use(express.json());
+
+// ═══════════════════════════════════════════════════════════
+// GASTROGO API ROUTES
+// ═══════════════════════════════════════════════════════════
+const authRoutes = require('./routes/auth');
+const menuRoutes = require('./routes/menu');
+const ordersRoutes = require('./routes/orders');
+const tablesRoutes = require('./routes/tables');
+const kitchenRoutes = require('./routes/kitchen');
+const qrRoutes = require('./routes/qr');
+
+app.use('/api/auth', authRoutes);
+app.use('/api/menu', menuRoutes);
+app.use('/api/orders', ordersRoutes);
+app.use('/api/tables', tablesRoutes);
+app.use('/api/kitchen', kitchenRoutes);
+app.use('/api/qr', qrRoutes);
+// ═══════════════════════════════════════════════════════════
 
 // Simple API key auth for protected routes
 const API_KEY = process.env.API_KEY || 'secret-api-key';
@@ -347,7 +476,12 @@ app.get('/presentation', (req, res) => {
 const menuModule = require('./menuModule');
 app.use('/menu', menuModule);
 
-app.listen(PORT, () => console.log(`gastro-backend listening on ${PORT}`));
+// WebSocket stats endpoint
+app.get('/api/ws/stats', (req, res) => {
+  res.json(wsService.getStats());
+});
+
+server.listen(PORT, () => console.log(`gastro-backend listening on ${PORT}`));
 
 // Debug route
 app.get('/debug', (req, res) => {
